@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>画像アップロード & 制作者コメント</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;max-width:980px;margin:24px auto;padding:0 12px}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between}
+    .card{border:1px solid #e5e7eb;border-radius:16px;padding:16px;margin:16px 0;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .btn{cursor:pointer;border:1px solid #111;border-radius:999px;padding:8px 14px;background:#111;color:#fff}
+    .btn.secondary{background:#fff;color:#111}
+    .muted{color:#6b7280;font-size:12px}
+    img.preview{max-width:100%;height:auto;border-radius:12px}
+    .photo{display:grid;grid-template-columns:180px 1fr;gap:16px;align-items:start}
+    .comment{background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}
+    textarea{width:100%;min-height:80px}
+    @media (max-width:800px){.row,.photo{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>画像アップロード & 制作者コメント</h1>
+    <div>
+      <button id="loginBtn" class="btn secondary">ログイン/匿名ログイン</button>
+      <button id="logoutBtn" class="btn secondary" style="display:none">ログアウト</button>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>1) 画像をアップロード</h2>
+    <p class="muted">誰でもアップロード可（匿名ログイン）。JPEG/PNG推奨、10MBまで。</p>
+    <div class="row">
+      <div>
+        <input type="file" id="fileInput" accept="image/*" />
+        <div id="previewWrap" style="margin-top:12px"></div>
+      </div>
+      <div>
+        <button id="uploadBtn" class="btn" disabled>アップロード</button>
+        <div class="muted" id="uploadInfo" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2) ギャラリー & コメント</h2>
+    <div id="gallery"></div>
+  </section>
+
+  <!-- Firebase v10 CDN (modular) -->
+  <script type="module">
+    // === 1) ここを自分のFirebase設定に差し替え ===
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    // 制作者（コメントを書けるユーザー）のUIDをセット
+    const ADMIN_UID = "REPLACE_WITH_ADMIN_UID";
+
+    // === 2) Firebase初期化 ===
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInAnonymously, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import { getFirestore, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    const fileInput = document.getElementById('fileInput');
+    const previewWrap = document.getElementById('previewWrap');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadInfo = document.getElementById('uploadInfo');
+    const gallery = document.getElementById('gallery');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+
+    let currentUser = null;
+    let selectedFile = null;
+
+    fileInput.addEventListener('change', () => {
+      previewWrap.innerHTML = '';
+      selectedFile = null;
+      const f = fileInput.files?.[0];
+      if (!f) { uploadBtn.disabled = true; return; }
+      if (!f.type.startsWith('image/')) { alert('画像ファイルを選択してください'); fileInput.value=''; return; }
+      if (f.size > 10 * 1024 * 1024) { alert('10MB以下の画像にしてください'); fileInput.value=''; return; }
+      selectedFile = f;
+      const img = document.createElement('img');
+      img.className = 'preview';
+      img.src = URL.createObjectURL(f);
+      previewWrap.appendChild(img);
+      uploadBtn.disabled = !currentUser;
+    });
+
+    loginBtn.addEventListener('click', async () => {
+      const choice = prompt('1: 匿名ログイン  /  2: 管理者ログイン (メール&パスワード)\n入力: 1 または 2');
+      try {
+        if (choice === '2') {
+          const email = prompt('管理者メールアドレス:');
+          const password = prompt('パスワード:');
+          if (!email || !password) return;
+          await signInWithEmailAndPassword(auth, email, password);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        alert('ログインに失敗しました: ' + e.message);
+      }
+    });
+
+    logoutBtn.addEventListener('click', async () => {
+      await signOut(auth);
+    });
+
+    onAuthStateChanged(auth, async (user) => {
+      currentUser = user;
+      const isLoggedIn = !!user;
+      loginBtn.style.display = isLoggedIn ? 'none' : '';
+      logoutBtn.style.display = isLoggedIn ? '' : 'none';
+      uploadBtn.disabled = !(isLoggedIn && selectedFile);
+    });
+
+    uploadBtn.addEventListener('click', async () => {
+      if (!currentUser || !selectedFile) return;
+      uploadBtn.disabled = true;
+      uploadInfo.textContent = 'アップロード中…';
+      try {
+        const ext = selectedFile.name.split('.').pop();
+        const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const path = `images/${currentUser.uid}/${safeName}`;
+        const storageRef = ref(storage, path);
+        await uploadBytes(storageRef, selectedFile);
+        const url = await getDownloadURL(storageRef);
+
+        await addDoc(collection(db, 'photos'), {
+          uid: currentUser.uid,
+          path,
+          url,
+          createdAt: serverTimestamp()
+        });
+
+        uploadInfo.textContent = 'アップロード完了！';
+        fileInput.value = '';
+        previewWrap.innerHTML = '';
+        selectedFile = null;
+      } catch (e) {
+        console.error(e);
+        alert('アップロードに失敗しました: ' + e.message);
+      } finally {
+        uploadBtn.disabled = false;
+        setTimeout(()=> uploadInfo.textContent='', 1500);
+      }
+    });
+
+    const photosQ = query(collection(db, 'photos'), orderBy('createdAt','desc'));
+    onSnapshot(photosQ, async (snap) => {
+      gallery.innerHTML = '';
+      for (const d of snap.docs) {
+        const data = d.data();
+        const item = document.createElement('div');
+        item.className = 'card photo';
+        item.innerHTML = `
+          <div><img src="${data.url}" style="max-width:100%;border-radius:12px"/></div>
+          <div>
+            <div class="muted">アップロード者: ${data.uid?.slice(0,8)}… / ${data.createdAt?.toDate?.().toLocaleString?.() ?? ''}</div>
+          </div>
+        `;
+        gallery.appendChild(item);
+      }
+    });
+  </script>
+</body>
+</html>
