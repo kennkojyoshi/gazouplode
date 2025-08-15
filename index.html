@@ -66,254 +66,233 @@
   </section>
 
   <!-- Firebase v10 CDN (modular) -->
-  <script type="module">
-    // === 1) Firebase設定（あなたのプロジェクト） ===
-    const firebaseConfig = {
-      apiKey: "<script type="module">
-  // Import the functions you need from the SDKs you need
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-analytics.js";
-  // TODO: Add SDKs for Firebase products that you want to use
-  // https://firebase.google.com/docs/web/setup#available-libraries
-
-  // Your web app's Firebase configuration
-  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+ <script type="module">
+  // === Firebase設定（あなたのプロジェクト）===
   const firebaseConfig = {
-    apiKey: "AIzaSyAt4ebgY4u1ySZtlBZjqXTXOMG49h6A-T0",
+    apiKey: "AIzaSyAt4ebgY4u1ySZt1BZjqXTXOMG49h6A-T0",
     authDomain: "gazo-upload-e4201.firebaseapp.com",
     projectId: "gazo-upload-e4201",
-    storageBucket: "gazo-upload-e4201.firebasestorage.app",
+    storageBucket: "gazo-upload-e4201.appspot.com",
     messagingSenderId: "1077188830783",
     appId: "1:1077188830783:web:4d4356de2b301eec957a8a",
     measurementId: "G-3R3LT0LXE7"
   };
+  // 制作者（コメントを書けるユーザー）のUID
+  const ADMIN_UID = "sV77t4Rsi4gzeAAnYzbfosPAt942";
 
-  // Initialize Firebase
+  // === Firebase v10（CDN, modular）だけを使用 ===
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, onAuthStateChanged, signInAnonymously, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getFirestore, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
   const app = initializeApp(firebaseConfig);
-  const analytics = getAnalytics(app);
-</script>",
-      authDomain: "gazo-upload-e4201.firebaseapp.com",
-      projectId: "gazo-upload-e4201",
-      storageBucket: "gazo-upload-e4201.appspot.com",
-      messagingSenderId: "1077188830783",
-      appId: "1:1077188830783:web:4d4356de2b301eec957a8a",
-      measurementId: "G-3R3LT0LXE7"
-    };
-    // 制作者（コメントを書けるユーザー）のUID
-    const ADMIN_UID = "sV77t4Rsi4gzeAAnYzbfosPAt942";
+  const auth = getAuth(app);
+  const db = getFirestore(app);
 
-    // === 2) Firebase初期化 ===
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getAuth, onAuthStateChanged, signInAnonymously, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-    import { getFirestore, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  // === UI要素 ===
+  const emailEl = document.getElementById('email');
+  const passwordEl = document.getElementById('password');
+  const adminLoginBtn = document.getElementById('adminLoginBtn');
+  const anonLoginBtn = document.getElementById('anonLoginBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const authInfo = document.getElementById('authInfo');
 
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
+  const fileInput = document.getElementById('fileInput');
+  const previewWrap = document.getElementById('previewWrap');
+  const uploadBtn = document.getElementById('uploadBtn');
+  const uploadInfo = document.getElementById('uploadInfo');
+  const gallery = document.getElementById('gallery');
+  const galleryCard = document.getElementById('galleryCard');
 
-    // === 3) UI要素 ===
-    const emailEl = document.getElementById('email');
-    const passwordEl = document.getElementById('password');
-    const adminLoginBtn = document.getElementById('adminLoginBtn');
-    const anonLoginBtn = document.getElementById('anonLoginBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
-    const authInfo = document.getElementById('authInfo');
+  let currentUser = null;
+  let selectedFile = null;
+  let photosUnsub = null;
 
-    const fileInput = document.getElementById('fileInput');
-    const previewWrap = document.getElementById('previewWrap');
-    const uploadBtn = document.getElementById('uploadBtn');
-    const uploadInfo = document.getElementById('uploadInfo');
-    const gallery = document.getElementById('gallery');
-    const galleryCard = document.getElementById('galleryCard');
+  // 画像プレビュー
+  fileInput.addEventListener('change', () => {
+    previewWrap.innerHTML = '';
+    selectedFile = null;
+    const f = fileInput.files?.[0];
+    if (!f) { uploadBtn.disabled = true; return; }
+    if (!f.type.startsWith('image/')) { alert('画像ファイルを選択してください'); fileInput.value=''; return; }
+    if (f.size > 10 * 1024 * 1024) { alert('10MB以下の画像にしてください'); fileInput.value=''; return; }
+    selectedFile = f;
+    const img = document.createElement('img');
+    img.className = 'preview';
+    img.src = URL.createObjectURL(f);
+    previewWrap.appendChild(img);
+    uploadBtn.disabled = !currentUser;
+  });
 
-    let currentUser = null;
-    let selectedFile = null;
-    let photosUnsub = null;
+  // ログイン
+  adminLoginBtn.addEventListener('click', async () => {
+    const email = emailEl.value.trim();
+    const password = passwordEl.value;
+    if (!email || !password) { authInfo.textContent = 'メールとパスワードを入力してください'; return; }
+    try { await signInWithEmailAndPassword(auth, email, password); }
+    catch (e) { authInfo.textContent = '管理者ログインに失敗: ' + e.message; }
+  });
+  anonLoginBtn.addEventListener('click', async () => {
+    try { await signInAnonymously(auth); }
+    catch (e) { authInfo.textContent = '匿名ログインに失敗: ' + e.message; }
+  });
+  logoutBtn.addEventListener('click', async () => { await signOut(auth); });
 
-    // 画像プレビュー
-    fileInput.addEventListener('change', () => {
+  // 画像をCanvasでリサイズ→Base64化
+  async function fileToBase64Compressed(file, maxW=1280, quality=0.8) {
+    const img = new Image();
+    const reader = new FileReader();
+    const loaded = new Promise((res, rej) => { img.onload = () => res(); img.onerror = rej; });
+    reader.onload = e => { img.src = e.target.result; };
+    reader.readAsDataURL(file);
+    await loaded;
+
+    const scale = Math.min(maxW / img.width, 1);
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+
+  // アップロード（photosに保存）
+  uploadBtn.addEventListener('click', async () => {
+    if (!currentUser || !selectedFile) return;
+    uploadBtn.disabled = true;
+    uploadInfo.textContent = 'アップロード中…';
+    try {
+      const base64 = await fileToBase64Compressed(selectedFile, 1280, 0.8);
+      await addDoc(collection(db, 'photos'), {
+        uid: currentUser.uid,
+        imageData: base64,
+        createdAt: serverTimestamp()
+      });
+      uploadInfo.textContent = 'アップロード完了！';
+      fileInput.value = '';
       previewWrap.innerHTML = '';
       selectedFile = null;
-      const f = fileInput.files?.[0];
-      if (!f) { uploadBtn.disabled = true; return; }
-      if (!f.type.startsWith('image/')) { alert('画像ファイルを選択してください'); fileInput.value=''; return; }
-      if (f.size > 10 * 1024 * 1024) { alert('10MB以下の画像にしてください'); fileInput.value=''; return; }
-      selectedFile = f;
-      const img = document.createElement('img');
-      img.className = 'preview';
-      img.src = URL.createObjectURL(f);
-      previewWrap.appendChild(img);
-      uploadBtn.disabled = !currentUser;
-    });
-
-    // ログインボタン
-    adminLoginBtn.addEventListener('click', async () => {
-      const email = emailEl.value.trim();
-      const password = passwordEl.value;
-      if (!email || !password) { authInfo.textContent = 'メールとパスワードを入力してください'; return; }
-      try { await signInWithEmailAndPassword(auth, email, password); }
-      catch (e) { authInfo.textContent = '管理者ログインに失敗: ' + e.message; }
-    });
-    anonLoginBtn.addEventListener('click', async () => {
-      try { await signInAnonymously(auth); }
-      catch (e) { authInfo.textContent = '匿名ログインに失敗: ' + e.message; }
-    });
-    logoutBtn.addEventListener('click', async () => { await signOut(auth); });
-
-    // 画像をCanvasでリサイズ→Base64化
-    async function fileToBase64Compressed(file, maxW=1280, quality=0.8) {
-      const img = new Image();
-      const reader = new FileReader();
-      const loaded = new Promise((res, rej) => { img.onload = () => res(); img.onerror = rej; });
-      reader.onload = e => { img.src = e.target.result; };
-      reader.readAsDataURL(file);
-      await loaded;
-
-      const scale = Math.min(maxW / img.width, 1);
-      const w = Math.round(img.width * scale);
-      const h = Math.round(img.height * scale);
-
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-
-      return canvas.toDataURL('image/jpeg', quality);
+    } catch (e) {
+      alert('アップロードに失敗: ' + e.message);
+    } finally {
+      uploadBtn.disabled = false;
+      setTimeout(()=> uploadInfo.textContent='', 1500);
     }
+  });
 
-    // アップロード（photosに直接保存）
-    uploadBtn.addEventListener('click', async () => {
-      if (!currentUser || !selectedFile) return;
-      uploadBtn.disabled = true;
-      uploadInfo.textContent = 'アップロード中…';
-      try {
-        const base64 = await fileToBase64Compressed(selectedFile, 1280, 0.8);
-        await addDoc(collection(db, 'photos'), {
-          uid: currentUser.uid,
-          imageData: base64,
-          createdAt: serverTimestamp()
+  // ギャラリー描画
+  async function renderPhotosSnapshot(snap) {
+    gallery.innerHTML = '';
+    for (const d of snap.docs) {
+      const data = d.data();
+      const item = document.createElement('div');
+      item.className = 'card photo';
+      const created = data.createdAt?.toDate?.()?.toLocaleString?.() ?? '';
+      item.innerHTML = `
+        <div><img src="${data.imageData}" style="max-width:100%;border-radius:12px"/></div>
+        <div>
+          <div class="muted">アップロード者: ${String(data.uid||'').slice(0,8)}… / ${created}</div>
+          <div id="comments-${d.id}"></div>
+          <div id="commentForm-${d.id}"></div>
+        </div>
+      `;
+      gallery.appendChild(item);
+
+      // コメント購読
+      const { collection: coll, onSnapshot: onS, query: q, orderBy: ob } =
+        await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+      const commentsQ = q(coll(db, `photos/${d.id}/comments`), ob('createdAt','asc'));
+      onS(commentsQ, (csnap) => {
+        const wrap = item.querySelector(`#comments-${d.id}`);
+        wrap.innerHTML = '';
+        csnap.forEach(c => {
+          const cdata = c.data();
+          const cdiv = document.createElement('div');
+          cdiv.className = 'comment';
+          const ts = cdata.createdAt?.toDate?.()?.toLocaleString?.() ?? '';
+          cdiv.innerHTML =
+            `<div class="muted">by ${escapeHtml(cdata.author ?? '制作者')} / ${ts}</div><div>${escapeHtml(cdata.body ?? '')}</div>`;
+          wrap.appendChild(cdiv);
         });
-        uploadInfo.textContent = 'アップロード完了！';
-        fileInput.value = '';
-        previewWrap.innerHTML = '';
-        selectedFile = null;
-      } catch (e) {
-        alert('アップロードに失敗: ' + e.message);
-      } finally {
-        uploadBtn.disabled = false;
-        setTimeout(()=> uploadInfo.textContent='', 1500);
-      }
-    });
+      });
 
-    // ギャラリー描画
-    async function renderPhotosSnapshot(snap) {
-      gallery.innerHTML = '';
-      for (const d of snap.docs) {
-        const data = d.data();
-        const item = document.createElement('div');
-        item.className = 'card photo';
-        const created = data.createdAt?.toDate?.()?.toLocaleString?.() ?? '';
-        item.innerHTML = `
-          <div><img src="${data.imageData}" style="max-width:100%;border-radius:12px"/></div>
-          <div>
-            <div class="muted">アップロード者: ${String(data.uid||'').slice(0,8)}… / ${created}</div>
-            <div id="comments-${d.id}"></div>
-            <div id="commentForm-${d.id}"></div>
-          </div>
-        `;
-        gallery.appendChild(item);
-
-        // コメント購読（ルール：管理者 or 親photoのuidが自分）
-        const { collection: coll, onSnapshot: onS, query: q, orderBy: ob } =
-          await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
-        const commentsQ = q(coll(db, `photos/${d.id}/comments`), ob('createdAt','asc'));
-        onS(commentsQ, (csnap) => {
-          const wrap = item.querySelector(`#comments-${d.id}`);
-          wrap.innerHTML = '';
-          csnap.forEach(c => {
-            const cdata = c.data();
-            const cdiv = document.createElement('div');
-            cdiv.className = 'comment';
-            const ts = cdata.createdAt?.toDate?.()?.toLocaleString?.() ?? '';
-            cdiv.innerHTML =
-              `<div class="muted">by ${escapeHtml(cdata.author ?? '制作者')} / ${ts}</div><div>${escapeHtml(cdata.body ?? '')}</div>`;
-            wrap.appendChild(cdiv);
-          });
-        });
-
-        // 管理者のみコメント投稿フォーム
-        const formWrap = item.querySelector(`#commentForm-${d.id}`);
-        const isAdmin = currentUser && currentUser.uid === ADMIN_UID;
-        if (isAdmin) {
-          const ta = document.createElement('textarea');
-          ta.placeholder = '制作者コメントを書いて投稿…';
-          const btn = document.createElement('button');
-          btn.textContent = 'コメントを投稿';
-          btn.className = 'btn';
-          btn.style.marginTop = '8px';
-          btn.addEventListener('click', async () => {
-            if (!ta.value.trim()) return;
-            try {
-              await addDoc(collection(db, `photos/${d.id}/comments`), {
-                author: '制作者',
-                body: ta.value.trim(),
-                createdAt: serverTimestamp()
-              });
-              ta.value = '';
-            } catch (e) {
-              alert('コメント投稿に失敗: ' + e.message);
-            }
-          });
-          formWrap.appendChild(ta);
-          formWrap.appendChild(btn);
-        } else {
-          formWrap.innerHTML = '<div class="muted">※ 制作者コメントは後ほど追加されます</div>';
-        }
-      }
-    }
-
-    // リスナー切り替え（管理者＝全件、使用者＝自分の写真のみ）
-    function stopPhotosListener() {
-      if (photosUnsub) { photosUnsub(); photosUnsub = null; }
-    }
-    function startAdminPhotosListener() {
-      if (photosUnsub) return;
-      const photosQ = query(collection(db, 'photos'), orderBy('createdAt','desc'));
-      photosUnsub = onSnapshot(photosQ, renderPhotosSnapshot);
-    }
-    function startUserPhotosListener(uid) {
-      if (photosUnsub) return;
-      const photosQ = query(collection(db, 'photos'), where('uid','==', uid), orderBy('createdAt','desc'));
-      photosUnsub = onSnapshot(photosQ, renderPhotosSnapshot);
-    }
-
-    onAuthStateChanged(auth, async (user) => {
-      currentUser = user;
-      const isAdmin = !!user && user.uid === ADMIN_UID;
-      authInfo.textContent = user
-        ? `ログイン中: ${isAdmin ? '管理者' : '一般'} / UID: ${user.uid.slice(0,8)}…`
-        : '未ログインです';
-
-      // ギャラリーの表示/非表示（未ログインでは隠す）
-      galleryCard.style.display = user ? '' : 'none';
-
-      // 購読を役割に応じて切替
-      stopPhotosListener();
+      // 管理者のみコメント投稿フォーム
+      const formWrap = item.querySelector(`#commentForm-${d.id}`);
+      const isAdmin = currentUser && currentUser.uid === ADMIN_UID;
       if (isAdmin) {
-        startAdminPhotosListener();
-      } else if (user) {
-        startUserPhotosListener(user.uid);
+        const ta = document.createElement('textarea');
+        ta.placeholder = '制作者コメントを書いて投稿…';
+        const btn = document.createElement('button');
+        btn.textContent = 'コメントを投稿';
+        btn.className = 'btn';
+        btn.style.marginTop = '8px';
+        btn.addEventListener('click', async () => {
+          if (!ta.value.trim()) return;
+          try {
+            await addDoc(collection(db, `photos/${d.id}/comments`), {
+              author: '制作者',
+              body: ta.value.trim(),
+              createdAt: serverTimestamp()
+            });
+            ta.value = '';
+          } catch (e) {
+            alert('コメント投稿に失敗: ' + e.message);
+          }
+        });
+        formWrap.appendChild(ta);
+        formWrap.appendChild(btn);
+      } else {
+        formWrap.innerHTML = '<div class="muted">※ 制作者コメントは後ほど追加されます</div>';
       }
-
-      uploadBtn.disabled = !(!!user && selectedFile);
-      logoutBtn.style.display = user ? '' : 'none';
-    });
-
-    // XSS対策: 最低限のエスケープ
-    function escapeHtml(str){
-      return String(str).replace(/[&<>\"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[s]));
     }
-  </script>
+  }
+
+  // リスナー切り替え（管理者＝全件、使用者＝自分の写真のみ）
+  function stopPhotosListener() {
+    if (photosUnsub) { photosUnsub(); photosUnsub = null; }
+  }
+  function startAdminPhotosListener() {
+    if (photosUnsub) return;
+    const photosQ = query(collection(db, 'photos'), orderBy('createdAt','desc'));
+    photosUnsub = onSnapshot(photosQ, renderPhotosSnapshot);
+  }
+  function startUserPhotosListener(uid) {
+    if (photosUnsub) return;
+    const photosQ = query(collection(db, 'photos'), where('uid','==', uid), orderBy('createdAt','desc'));
+    photosUnsub = onSnapshot(photosQ, renderPhotosSnapshot);
+  }
+
+  onAuthStateChanged(auth, async (user) => {
+    currentUser = user;
+    const isAdmin = !!user && user.uid === ADMIN_UID;
+    authInfo.textContent = user
+      ? `ログイン中: ${isAdmin ? '管理者' : '一般'} / UID: ${user.uid.slice(0,8)}…`
+      : '未ログインです';
+
+    // ギャラリーの表示/非表示（未ログインでは隠す）
+    galleryCard.style.display = user ? '' : 'none';
+
+    // 購読を役割に応じて切替
+    stopPhotosListener();
+    if (isAdmin) {
+      startAdminPhotosListener();
+    } else if (user) {
+      startUserPhotosListener(user.uid);
+    }
+
+    uploadBtn.disabled = !(!!user && selectedFile);
+    logoutBtn.style.display = user ? '' : 'none';
+  });
+
+  // XSS対策
+  function escapeHtml(str){
+    return String(str).replace(/[&<>\"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[s]));
+  }
+</script>
+
 
   <!-- 使い方メモ（このHTMLはそのままGitHubに置けます）
   1) Authentication: 匿名＋メール/パスを有効化。管理者アカ作成済み（UIDはADMIN_UIDに設定）。
