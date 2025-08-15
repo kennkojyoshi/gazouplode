@@ -38,7 +38,7 @@
       </div>
       <div>
         <button id="adminLoginBtn" class="btn" style="width:100%;margin-bottom:8px">管理者ログイン（メール/パス）</button>
-        <button id="anonLoginBtn" class="btn secondary" style="width:100%;margin-bottom:8px">匿名ログイン（一般アップロード用）</button>
+        <button id="anonLoginBtn" class="btn secondary" style="width:100%;margin-bottom:8px">匿名ログイン（一般）</button>
         <button id="logoutBtn" class="btn secondary" style="width:100%;display:none">ログアウト</button>
         <div id="authInfo" class="muted" style="margin-top:8px"></div>
       </div>
@@ -60,30 +60,30 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="galleryCard">
     <h2>2) ギャラリー & コメント</h2>
     <div id="gallery"></div>
   </section>
 
   <!-- Firebase v10 CDN (modular) -->
   <script type="module">
-    // === 1) あなたの Firebase 設定 ===
+    // === 1) Firebase設定（あなたのプロジェクト） ===
     const firebaseConfig = {
-    apiKey: "AIzaSyAt4ebgY4u1ySZtlBZjqXTXOMG49h6A-T0",
-    authDomain: "gazo-upload-e4201.firebaseapp.com",
-    projectId: "gazo-upload-e4201",
-    storageBucket: "gazo-upload-e4201.firebasestorage.app",
-    messagingSenderId: "1077188830783",
-    appId: "1:1077188830783:web:4d4356de2b301eec957a8a",
-    measurementId: "G-3R3LT0LXE7"
-  };
+      apiKey: "AIzaSyAt4ebgY4u1ySZt1BZjqXTXOMG49h6A-T0",
+      authDomain: "gazo-upload-e4201.firebaseapp.com",
+      projectId: "gazo-upload-e4201",
+      storageBucket: "gazo-upload-e4201.appspot.com",
+      messagingSenderId: "1077188830783",
+      appId: "1:1077188830783:web:4d4356de2b301eec957a8a",
+      measurementId: "G-3R3LT0LXE7"
+    };
     // 制作者（コメントを書けるユーザー）のUID
     const ADMIN_UID = "sV77t4Rsi4gzeAAnYzbfosPAt942";
 
     // === 2) Firebase初期化 ===
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import { getAuth, onAuthStateChanged, signInAnonymously, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-    import { getFirestore, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import { getFirestore, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
@@ -102,9 +102,11 @@
     const uploadBtn = document.getElementById('uploadBtn');
     const uploadInfo = document.getElementById('uploadInfo');
     const gallery = document.getElementById('gallery');
+    const galleryCard = document.getElementById('galleryCard');
 
     let currentUser = null;
     let selectedFile = null;
+    let photosUnsub = null;
 
     // 画像プレビュー
     fileInput.addEventListener('change', () => {
@@ -122,7 +124,7 @@
       uploadBtn.disabled = !currentUser;
     });
 
-    // ログインボタン処理
+    // ログインボタン
     adminLoginBtn.addEventListener('click', async () => {
       const email = emailEl.value.trim();
       const password = passwordEl.value;
@@ -136,20 +138,7 @@
     });
     logoutBtn.addEventListener('click', async () => { await signOut(auth); });
 
-    onAuthStateChanged(auth, async (user) => {
-      currentUser = user;
-      if (user) {
-        const isAdmin = user.uid === ADMIN_UID;
-        authInfo.textContent = `ログイン中: ${isAdmin ? '管理者' : '一般'} / UID: ${user.uid.slice(0,8)}…`;
-        logoutBtn.style.display = '';
-      } else {
-        authInfo.textContent = '未ログインです';
-        logoutBtn.style.display = 'none';
-      }
-      uploadBtn.disabled = !(!!user && selectedFile);
-    });
-
-    // ====== Firestore版：Canvasでリサイズ & Base64保存 ======
+    // 画像をCanvasでリサイズ→Base64化
     async function fileToBase64Compressed(file, maxW=1280, quality=0.8) {
       const img = new Image();
       const reader = new FileReader();
@@ -170,7 +159,7 @@
       return canvas.toDataURL('image/jpeg', quality);
     }
 
-    // アップロード（photosコレクションに直接保存）
+    // アップロード（photosに直接保存）
     uploadBtn.addEventListener('click', async () => {
       if (!currentUser || !selectedFile) return;
       uploadBtn.disabled = true;
@@ -194,9 +183,8 @@
       }
     });
 
-    // ギャラリー購読
-    const photosQ = query(collection(db, 'photos'), orderBy('createdAt','desc'));
-    onSnapshot(photosQ, async (snap) => {
+    // ギャラリー描画
+    async function renderPhotosSnapshot(snap) {
       gallery.innerHTML = '';
       for (const d of snap.docs) {
         const data = d.data();
@@ -213,8 +201,9 @@
         `;
         gallery.appendChild(item);
 
-        // コメント読み取り
-        const { collection: coll, onSnapshot: onS, query: q, orderBy: ob } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+        // コメント購読（ルール：管理者 or 親photoのuidが自分）
+        const { collection: coll, onSnapshot: onS, query: q, orderBy: ob } =
+          await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
         const commentsQ = q(coll(db, `photos/${d.id}/comments`), ob('createdAt','asc'));
         onS(commentsQ, (csnap) => {
           const wrap = item.querySelector(`#comments-${d.id}`);
@@ -224,12 +213,13 @@
             const cdiv = document.createElement('div');
             cdiv.className = 'comment';
             const ts = cdata.createdAt?.toDate?.()?.toLocaleString?.() ?? '';
-            cdiv.innerHTML = `<div class="muted">by ${escapeHtml(cdata.author ?? '制作者')} / ${ts}</div><div>${escapeHtml(cdata.body ?? '')}</div>`;
+            cdiv.innerHTML =
+              `<div class="muted">by ${escapeHtml(cdata.author ?? '制作者')} / ${ts}</div><div>${escapeHtml(cdata.body ?? '')}</div>`;
             wrap.appendChild(cdiv);
           });
         });
 
-        // 管理者のみコメントフォーム
+        // 管理者のみコメント投稿フォーム
         const formWrap = item.querySelector(`#commentForm-${d.id}`);
         const isAdmin = currentUser && currentUser.uid === ADMIN_UID;
         if (isAdmin) {
@@ -258,6 +248,43 @@
           formWrap.innerHTML = '<div class="muted">※ 制作者コメントは後ほど追加されます</div>';
         }
       }
+    }
+
+    // リスナー切り替え（管理者＝全件、使用者＝自分の写真のみ）
+    function stopPhotosListener() {
+      if (photosUnsub) { photosUnsub(); photosUnsub = null; }
+    }
+    function startAdminPhotosListener() {
+      if (photosUnsub) return;
+      const photosQ = query(collection(db, 'photos'), orderBy('createdAt','desc'));
+      photosUnsub = onSnapshot(photosQ, renderPhotosSnapshot);
+    }
+    function startUserPhotosListener(uid) {
+      if (photosUnsub) return;
+      const photosQ = query(collection(db, 'photos'), where('uid','==', uid), orderBy('createdAt','desc'));
+      photosUnsub = onSnapshot(photosQ, renderPhotosSnapshot);
+    }
+
+    onAuthStateChanged(auth, async (user) => {
+      currentUser = user;
+      const isAdmin = !!user && user.uid === ADMIN_UID;
+      authInfo.textContent = user
+        ? `ログイン中: ${isAdmin ? '管理者' : '一般'} / UID: ${user.uid.slice(0,8)}…`
+        : '未ログインです';
+
+      // ギャラリーの表示/非表示（未ログインでは隠す）
+      galleryCard.style.display = user ? '' : 'none';
+
+      // 購読を役割に応じて切替
+      stopPhotosListener();
+      if (isAdmin) {
+        startAdminPhotosListener();
+      } else if (user) {
+        startUserPhotosListener(user.uid);
+      }
+
+      uploadBtn.disabled = !(!!user && selectedFile);
+      logoutBtn.style.display = user ? '' : 'none';
     });
 
     // XSS対策: 最低限のエスケープ
@@ -267,28 +294,9 @@
   </script>
 
   <!-- 使い方メモ（このHTMLはそのままGitHubに置けます）
-  Firestore ルール（コンソールの「ルール」タブに貼る）※ ADMIN_UID を差し替えて公開
-  rules_version = '2';
-  service cloud.firestore {
-    match /databases/{database}/documents {
-      match /photos/{photoId} {
-        allow read: if request.auth != null && request.auth.uid == "ADMIN_UID"; // 管理者のみ閲覧
-        allow create: if request.auth != null
-                      && request.resource.data.uid == request.auth.uid
-                      && request.resource.data.imageData is string
-                      && request.resource.data.createdAt != null;
-        allow update, delete: if request.auth != null && request.auth.uid == "ADMIN_UID";
-      }
-      match /photos/{photoId}/comments/{commentId} {
-        allow read: if request.auth != null && request.auth.uid == "ADMIN_UID";
-        allow create: if request.auth != null && request.auth.uid == "ADMIN_UID"
-                      && request.resource.data.body is string
-                      && request.resource.data.createdAt != null
-                      && request.resource.data.author is string;
-        allow update, delete: if request.auth != null && request.auth.uid == "ADMIN_UID";
-      }
-    }
-  }
+  1) Authentication: 匿名＋メール/パスを有効化。管理者アカ作成済み（UIDはADMIN_UIDに設定）。
+  2) Firestore: 本番モードで作成。下のルールを貼って公開（ADMIN_UIDは同じ値）。
+  3) GitHubにアップロード → Pages公開。匿名でアップ、管理者で閲覧＆コメント。
   -->
 </body>
 </html>
