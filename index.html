@@ -38,7 +38,7 @@
       </div>
       <div>
         <button id="adminLoginBtn" class="btn" style="width:100%;margin-bottom:8px">管理者ログイン（メール/パス）</button>
-        <button id="anonLoginBtn" class="btn secondary" style="width:100%;margin-bottom:8px">匿名ログイン（一般）</button>
+        <button id="anonLoginBtn" class="btn secondary" style="width:100%;margin-bottom:8px">匿名ログイン（一般・アップロード用）</button>
         <button id="logoutBtn" class="btn secondary" style="width:100%;display:none">ログアウト</button>
         <div id="authInfo" class="muted" style="margin-top:8px"></div>
       </div>
@@ -61,29 +61,35 @@
   </section>
 
   <section class="card" id="galleryCard">
-    <h2>2) ギャラリー & コメント</h2>
+    <h2>2) ギャラリー & コメント（公開）</h2>
     <div id="gallery"></div>
   </section>
 
   <!-- Firebase v10 CDN (modular) -->
   <script type="module">
+    // === 1) Firebase設定（あなたのプロジェクト） ===
     const firebaseConfig = {
-  apiKey: "AIzaSyAt4ebgY4u1ySZtlBZjqXTXOMG49h6A-T0",  // ← コンソールの値をそのまま
-  authDomain: "gazo-upload-e4201.firebaseapp.com",
-  projectId: "gazo-upload-e4201",
-  storageBucket: "gazo-upload-e4201.appspot.com",
-  messagingSenderId: "1077188830783",
-  appId: "1:1077188830783:web:4d4356de2b301eec957a8a",
-  measurementId: "G-3R3LT0LXE7"
-};
-
-    // 制作者（管理者）UID
+      apiKey: "AIzaSyAt4ebgY4u1ySZt1BZjqXTXOMG49h6A-T0",
+      authDomain: "gazo-upload-e4201.firebaseapp.com",
+      projectId: "gazo-upload-e4201",
+      storageBucket: "gazo-upload-e4201.appspot.com",
+      messagingSenderId: "1077188830783",
+      appId: "1:1077188830783:web:4d4356de2b301eec957a8a",
+      measurementId: "G-3R3LT0LXE7"
+    };
+    // 管理者UID（削除やコメント投稿ができる）
     const ADMIN_UID = "sV77t4Rsi4gzeAAnYzbfosPAt942";
 
-    // === 2) Firebase初期化（v10.12.2） ===
+    // === 2) Firebase初期化 ===
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getAuth, onAuthStateChanged, signInAnonymously, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-    import { getFirestore, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import {
+      getAuth, onAuthStateChanged, signInAnonymously, signOut, signInWithEmailAndPassword
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import {
+      getFirestore, collection, addDoc, serverTimestamp,
+      onSnapshot, query, orderBy, where,
+      deleteDoc, doc, getDocs
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
@@ -102,7 +108,6 @@
     const uploadBtn = document.getElementById('uploadBtn');
     const uploadInfo = document.getElementById('uploadInfo');
     const gallery = document.getElementById('gallery');
-    const galleryCard = document.getElementById('galleryCard');
 
     let currentUser = null;
     let selectedFile = null;
@@ -130,11 +135,11 @@
       const password = passwordEl.value;
       if (!email || !password) { authInfo.textContent = 'メールとパスワードを入力してください'; return; }
       try { await signInWithEmailAndPassword(auth, email, password); }
-      catch (e) { authInfo.textContent = '管理者ログインに失敗: ' + e.message; }
+      catch (e) { authInfo.textContent = '管理者ログインに失敗: ' + (e.code || e.message); }
     });
     anonLoginBtn.addEventListener('click', async () => {
       try { await signInAnonymously(auth); }
-      catch (e) { authInfo.textContent = '匿名ログインに失敗: ' + e.message; }
+      catch (e) { authInfo.textContent = '匿名ログインに失敗: ' + (e.code || e.message); }
     });
     logoutBtn.addEventListener('click', async () => { await signOut(auth); });
 
@@ -185,6 +190,7 @@
 
     // === 8) ギャラリー描画関数 ===
     async function renderPhotosSnapshot(snap) {
+      const gallery = document.getElementById('gallery');
       gallery.innerHTML = '';
       for (const d of snap.docs) {
         const data = d.data();
@@ -201,7 +207,7 @@
         `;
         gallery.appendChild(item);
 
-        // コメント購読（ルール：管理者 or 親photoのuidが自分）
+        // コメント購読（公開読み取りOK）
         const { collection: coll, onSnapshot: onS, query: q, orderBy: ob } =
           await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
         const commentsQ = q(coll(db, `photos/${d.id}/comments`), ob('createdAt','asc'));
@@ -215,11 +221,27 @@
             const ts = cdata.createdAt?.toDate?.()?.toLocaleString?.() ?? '';
             cdiv.innerHTML =
               `<div class="muted">by ${escapeHtml(cdata.author ?? '制作者')} / ${ts}</div><div>${escapeHtml(cdata.body ?? '')}</div>`;
+            // 管理者だけ「コメント削除」ボタン
+            if (currentUser && currentUser.uid === ADMIN_UID) {
+              const del = document.createElement('button');
+              del.textContent = 'コメント削除';
+              del.className = 'btn secondary';
+              del.style.marginLeft = '8px';
+              del.addEventListener('click', async () => {
+                if (!confirm('このコメントを削除します。よろしいですか？')) return;
+                try {
+                  await deleteDoc(doc(db, `photos/${d.id}/comments`, c.id));
+                } catch (e) {
+                  alert('コメント削除に失敗: ' + e.message);
+                }
+              });
+              cdiv.appendChild(del);
+            }
             wrap.appendChild(cdiv);
           });
         });
 
-        // 管理者のみコメント投稿フォーム
+        // 管理者のみコメント投稿 + 写真削除ボタン
         const formWrap = item.querySelector(`#commentForm-${d.id}`);
         const isAdmin = currentUser && currentUser.uid === ADMIN_UID;
         if (isAdmin) {
@@ -244,24 +266,40 @@
           });
           formWrap.appendChild(ta);
           formWrap.appendChild(btn);
+
+          // 写真削除
+          const delPhoto = document.createElement('button');
+          delPhoto.textContent = '写真を削除';
+          delPhoto.className = 'btn secondary';
+          delPhoto.style.marginTop = '8px';
+          delPhoto.addEventListener('click', async () => {
+            if (!confirm('この写真を削除します（紐づくコメントも削除）。よろしいですか？')) return;
+            try {
+              // 先に子コメントを全削除
+              const commentsRef = collection(db, `photos/${d.id}/comments`);
+              const commentsSnap = await getDocs(commentsRef);
+              await Promise.all(commentsSnap.docs.map(s => deleteDoc(s.ref)));
+              // 親の写真を削除
+              await deleteDoc(doc(db, 'photos', d.id));
+            } catch (e) {
+              alert('写真削除に失敗: ' + e.message);
+            }
+          });
+          formWrap.appendChild(delPhoto);
+
         } else {
           formWrap.innerHTML = '<div class="muted">※ 制作者コメントは後ほど追加されます</div>';
         }
       }
     }
 
-    // === 9) リスナー切り替え（管理者＝全件、使用者＝自分の写真のみ） ===
+    // === 9) 公開フィード（全件）を購読 ===
     function stopPhotosListener() {
       if (photosUnsub) { photosUnsub(); photosUnsub = null; }
     }
-    function startAdminPhotosListener() {
+    function startPublicPhotosListener() {
       if (photosUnsub) return;
       const photosQ = query(collection(db, 'photos'), orderBy('createdAt','desc'));
-      photosUnsub = onSnapshot(photosQ, renderPhotosSnapshot);
-    }
-    function startUserPhotosListener(uid) {
-      if (photosUnsub) return;
-      const photosQ = query(collection(db, 'photos'), where('uid','==', uid), orderBy('createdAt','desc'));
       photosUnsub = onSnapshot(photosQ, renderPhotosSnapshot);
     }
 
@@ -270,33 +308,26 @@
       const isAdmin = !!user && user.uid === ADMIN_UID;
       authInfo.textContent = user
         ? `ログイン中: ${isAdmin ? '管理者' : '一般'} / UID: ${user.uid.slice(0,8)}…`
-        : '未ログインです';
+        : '未ログイン（閲覧のみ可）';
 
-      // 未ログイン時はギャラリー非表示
-      galleryCard.style.display = user ? '' : 'none';
-
-      // 役割に応じて購読切替（※管理者=全件、使用者=自分のみ）
+      // 常に公開フィードを購読
       stopPhotosListener();
-      if (isAdmin) {
-        startAdminPhotosListener();
-      } else if (user) {
-        startUserPhotosListener(user.uid);
-      }
+      startPublicPhotosListener();
 
+      // アップロードはログイン者のみ
       uploadBtn.disabled = !(!!user && selectedFile);
       logoutBtn.style.display = user ? '' : 'none';
     });
 
-    // === 10) XSS対策: 最低限のエスケープ ===
+    // === 10) XSS対策 ===
     function escapeHtml(str){
       return String(str).replace(/[&<>\"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[s]));
     }
   </script>
 
-  <!-- 使い方メモ
-    1) Authentication: 匿名＋メール/パスを有効化。管理者アカ作成（UIDはADMIN_UIDの値）。
-    2) Firestore: ルールを公開（管理者 or 本人のみ閲覧、コメントは本人/管理者のみ閲覧）。
-    3) GitHubにアップ後、ページを Ctrl+F5 で更新。
+  <!-- メモ
+    - 承認済みドメインに GitHub Pages のドメイン（kennkojyoshi.github.io）を追加済みか確認。
+    - 反映後は Ctrl+F5 でハードリロード。
   -->
 </body>
 </html>
